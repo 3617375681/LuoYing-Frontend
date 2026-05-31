@@ -7,13 +7,14 @@ import type { FileAttachment } from '../../types/chat'
 interface ChatInputProps {
   onSend: (text: string, attachments: FileAttachment[]) => void
   isLoading: boolean
+  contextSnippet?: string
 }
 
 function generateId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36)
 }
 
-export default function ChatInput({ onSend, isLoading }: ChatInputProps) {
+export default function ChatInput({ onSend, isLoading, contextSnippet }: ChatInputProps) {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<FileAttachment[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -34,6 +35,15 @@ export default function ChatInput({ onSend, isLoading }: ChatInputProps) {
     setAttachments([])
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
   }, [attachments, isLoading, onSend, text])
+
+  const handleInsertContext = useCallback(() => {
+    if (!contextSnippet?.trim() || isLoading) return
+    setText((current) => {
+      if (current.includes(contextSnippet.slice(0, 80))) return current
+      return current.trim() ? `${current.trim()}\n\n${contextSnippet}` : contextSnippet
+    })
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }, [contextSnippet, isLoading])
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -112,6 +122,19 @@ export default function ChatInput({ onSend, isLoading }: ChatInputProps) {
         />
 
         <div className="flex shrink-0 items-center gap-1 pb-1">
+          {contextSnippet && (
+            <button
+              onClick={handleInsertContext}
+              className="rounded-lg px-2.5 py-2 text-xs font-medium text-[#0067B1] opacity-80 transition-colors hover:bg-[#f0f7ff] hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="插入会议上下文"
+              title="把当前会议状态和最近转写插入输入框"
+              disabled={isLoading}
+            >
+              <span className="hidden sm:inline">会议上下文</span>
+              <FileText size={18} className="sm:hidden" />
+            </button>
+          )}
+
           <button
             onClick={() => fileInputRef.current?.click()}
             className="rounded-lg p-2 text-[#94a3b8] opacity-70 transition-colors hover:bg-[#f1f5f9] hover:text-[#0067B1] hover:opacity-100"

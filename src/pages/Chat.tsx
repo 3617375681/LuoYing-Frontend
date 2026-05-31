@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { Bot, ChevronDown, Menu, Radio } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ChatInput from '../components/chat/ChatInput'
 import ChatMessage from '../components/chat/ChatMessage'
 import ChatSidebar from '../components/chat/ChatSidebar'
@@ -8,6 +8,7 @@ import Live2DPanel from '../components/chat/Live2DPanel'
 import TypingIndicator from '../components/chat/TypingIndicator'
 import MeetingAgentCard from '../features/meeting-agent/MeetingAgentCard'
 import { useMeetingAgent } from '../features/meeting-agent/useMeetingAgent'
+import type { UseMeetingAgentResult } from '../features/meeting-agent/useMeetingAgent'
 import { useChat } from '../hooks/useChat'
 import type { FileAttachment } from '../types/chat'
 
@@ -22,6 +23,39 @@ const QUICK_QUESTIONS = [
   '学术资源',
   '校园服务',
 ]
+
+function buildMeetingContextSnippet(agent: UseMeetingAgentResult) {
+  if (agent.segments.length === 0 && !agent.latestState) return ''
+  const state = agent.latestState
+  const topic = state?.topics.find((item) => item.id === state.currentTopicId)?.title
+  const recentTranscript = agent.segments.slice(-12).map((segment, index) => {
+    const speaker = segment.speakerId ? `[${segment.speakerId}] ` : ''
+    return `${index + 1}. ${speaker}${segment.text}`
+  })
+  const openActions = state?.actionItems.filter((item) => item.status === 'open').slice(-5).map((item) => {
+    const meta = [item.owner ? `负责人：${item.owner}` : '', item.deadline ? `截止：${item.deadline}` : ''].filter(Boolean).join('，')
+    return meta ? `${item.text}（${meta}）` : item.text
+  }) ?? []
+  const openLoops = state?.openLoops.filter((item) => item.status === 'open').slice(-5).map((item) => item.question) ?? []
+  const risks = state?.risks.filter((item) => item.status === 'open').slice(-5).map((item) => item.text) ?? []
+
+  return [
+    '请基于下面的实时会议上下文回答我，不要当成普通校园问答：',
+    '',
+    '【会议状态】',
+    `阶段：${state?.phase ?? '识别中'}`,
+    `当前议题：${topic ?? '未明确'}`,
+    state?.summary ? `摘要：${state.summary}` : '',
+    openActions.length ? `待办：${openActions.join('；')}` : '',
+    openLoops.length ? `未闭环：${openLoops.join('；')}` : '',
+    risks.length ? `风险：${risks.join('；')}` : '',
+    '',
+    '【最近转写】',
+    recentTranscript.join('\n'),
+    '',
+    '我的问题：',
+  ].filter((line) => line !== '').join('\n')
+}
 
 export default function Chat() {
   const {
@@ -46,6 +80,7 @@ export default function Chat() {
   const meetingIntervention = meetingAgent.intervention
   const acknowledgeMeetingIntervention = meetingAgent.acknowledgeIntervention
   const meetingCanStart = meetingAgent.supported && meetingAgent.configured
+  const meetingContextSnippet = useMemo(() => buildMeetingContextSnippet(meetingAgent), [meetingAgent])
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -118,9 +153,10 @@ export default function Chat() {
   useEffect(() => {
     if (!userScrolledUp) {
       scrollToBottom()
-    } else {
-      setShowNewMsgIndicator(true)
+      return
     }
+    const frame = window.requestAnimationFrame(() => setShowNewMsgIndicator(true))
+    return () => window.cancelAnimationFrame(frame)
   }, [activeSession?.messages.length, currentAiText, isGenerating, scrollToBottom, userScrolledUp])
 
   const handleScroll = useCallback(() => {
@@ -317,7 +353,7 @@ export default function Chat() {
                       id: 'streaming',
                       role: 'assistant',
                       content: currentAiText,
-                      timestamp: Date.now(),
+                      timestamp: activeSession?.updatedAt ?? 0,
                       status: 'streaming',
                     }}
                     isGenerating={isGenerating}
@@ -352,7 +388,7 @@ export default function Chat() {
 
           {/* Input */}
           <div className="shrink-0 border-t border-[#f1f5f9] bg-white px-4 py-4 sm:px-6 xl:px-8">
-            <ChatInput onSend={handleSend} isLoading={isGenerating} />
+            <ChatInput onSend={handleSend} isLoading={isGenerating} contextSnippet={meetingContextSnippet} />
           </div>
         </section>
 
