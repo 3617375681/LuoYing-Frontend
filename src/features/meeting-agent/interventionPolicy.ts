@@ -1,8 +1,10 @@
 import type { InterventionCandidate, MeetingAgentPriority, MeetingAgentState, InterventionType } from './types'
 
-const COOLDOWN_MS = 45_000
-const SAME_TARGET_COOLDOWN_MS = 120_000
-const MIN_RISK_TEXT_LENGTH = 12
+const COOLDOWN_MS = 12_000
+const SAME_TARGET_COOLDOWN_MS = 45_000
+const MIN_RISK_TEXT_LENGTH = 10
+const AGGRESSIVE_SUMMARY_MIN_EVENTS = 4
+const AGGRESSIVE_TOPIC_IDLE_MS = 18_000
 
 const VAGUE_RISK_PATTERNS = [
   /有风险的?内容/,
@@ -51,6 +53,8 @@ export function rememberIntervention(memory: InterventionPolicyMemory, candidate
 
 function buildCandidates(state: MeetingAgentState, now: number): InterventionCandidate[] {
   const candidates: InterventionCandidate[] = []
+  const activeTopic = state.topics.find((item) => item.id === state.currentTopicId)
+
   for (const risk of state.risks.filter((item) => item.status === 'open' && isConcreteRisk(item.text))) {
     candidates.push({
       id: `intervention-${now}-risk-${risk.id}`,
@@ -61,23 +65,36 @@ function buildCandidates(state: MeetingAgentState, now: number): InterventionCan
         : `这里有个需要确认的风险：${risk.text}。我们先定一下影响范围和处理人吧。`,
       reason: '检测到具体、未解决的会议风险。',
       targetIds: [risk.id],
-      confidence: 0.9,
+      confidence: 0.92,
       createdAt: now,
     })
   }
 
-  for (const item of state.actionItems.filter((action) => action.status === 'open' && isActionableText(action.text) && (!action.owner || !action.deadline))) {
-    const missing = !item.owner && !item.deadline ? '负责人和截止时间' : !item.owner ? '负责人' : '截止时间'
-    candidates.push({
-      id: `intervention-${now}-action-${item.id}`,
-      type: 'assign_owner',
-      priority: 'high',
-      text: `这个待办「${item.text}」还缺${missing}。我们现在顺手定一下，避免会后没人接。`,
-      reason: `待办缺少${missing}。`,
-      targetIds: [item.id],
-      confidence: 0.95,
-      createdAt: now,
-    })
+  for (const item of state.actionItems.filter((action) => action.status === 'open' && isActionableText(action.text))) {
+    if (!item.owner || !item.deadline) {
+      const missing = !item.owner && !item.deadline ? '负责人和截止时间' : !item.owner ? '负责人' : '截止时间'
+      candidates.push({
+        id: `intervention-${now}-action-${item.id}`,
+        type: 'assign_owner',
+        priority: 'high',
+        text: `这个待办「${item.text}」还缺${missing}。我建议现在就定下来，别让它会后飘走。`,
+        reason: `待办缺少${missing}。`,
+        targetIds: [item.id],
+        confidence: 0.95,
+        createdAt: now,
+      })
+    } else {
+      candidates.push({
+        id: `intervention-${now}-action-confirm-${item.id}`,
+        type: 'time_check',
+        priority: 'medium',
+        text: `我确认一下：这个待办是「${item.text}」，${item.owner} 负责，时间是 ${item.deadline}。大家如果没异议，我就先按这个记。`,
+        reason: '主动复述已识别待办，推动会议形成共同记忆。',
+        targetIds: [item.id],
+        confidence: 0.72,
+        createdAt: now,
+      })
+    }
   }
 
   for (const loop of state.openLoops.filter((item) => item.status === 'open' && isActionableText(item.question))) {
@@ -86,25 +103,43 @@ function buildCandidates(state: MeetingAgentState, now: number): InterventionCan
       type: 'clarify',
       priority: loop.owner ? 'medium' : 'high',
       text: loop.owner
-        ? `刚才这个问题还开着：「${loop.question}」。${loop.owner} 要不要先给一个判断，或者定个会后确认方式？`
-        : `这个问题还没闭环：「${loop.question}」。我们要不要现在定一个 owner 来确认？`,
+        ? `我插一句，刚才这个问题还开着：「${loop.question}」。${loop.owner} 要不要先给一个判断，或者定个会后确认方式？`
+        : `这里有个问题还没闭环：「${loop.question}」。要不要现在指定一个人去确认？`,
       reason: '存在未闭环问题。',
       targetIds: [loop.id],
-      confidence: 0.85,
+      confidence: 0.88,
       createdAt: now,
     })
   }
 
   const proposed = state.decisions.filter((decision) => decision.status === 'proposed' && isActionableText(decision.text))
-  if (proposed.length >= 2) {
+  if (proposed.length >= 1) {
     candidates.push({
-      id: `intervention-${now}-decision`,
+      id: `intervention-${now}-decision-${proposed.map((item) => item.id).join('-')}`,
       type: 'push_decision',
-      priority: 'medium',
-      text: `现在已经有几个方案了。要不要先收敛一下：哪些今天拍板，哪些会后再补材料？`,
-      reason: '多个方案停留在 proposed，会议可能进入拉扯。',
+      priority: proposed.length >= 2 ? 'high' : 'medium',
+      text: proposed.length >= 2
+        ? `现在已经有几个方案了。我建议先收敛：哪些今天拍板，哪些会后补材料？`
+        : `我听到一个候选决策：「${proposed[0].text}」。要不要现在确认它是结论，还是先标成待讨论？`,
+      reason: '检测到候选决策，需要推动确认。',
       targetIds: proposed.map((item) => item.id),
-      confidence: 0.78,
+      confidence: 0.82,
+      createdAt: now,
+    })
+  }
+
+  if (activeTopic && shouldSummarizeTopic(state, activeTopic.lastSeenAt, now)) {
+    const openActionCount = state.actionItems.filter((item) => item.status === 'open').length
+    const openLoopCount = state.openLoops.filter((item) => item.status === 'open').length
+    const openRiskCount = state.risks.filter((item) => item.status === 'open').length
+    candidates.push({
+      id: `intervention-${now}-summary-${activeTopic.id}`,
+      type: 'summarize',
+      priority: openActionCount + openLoopCount + openRiskCount > 0 ? 'medium' : 'low',
+      text: `我先小结一下「${activeTopic.title}」：现在还有 ${openActionCount} 个待办、${openLoopCount} 个未闭环问题、${openRiskCount} 个风险。要不要先把下一步对齐一下？`,
+      reason: '主动阶段小结，帮助会议收束。',
+      targetIds: [activeTopic.id],
+      confidence: 0.68,
       createdAt: now,
     })
   }
@@ -140,10 +175,13 @@ function priorityScore(priority: MeetingAgentPriority) {
 }
 
 function typeScore(type: InterventionType) {
-  if (type === 'risk_alert') return 5
-  if (type === 'assign_owner') return 4
+  if (type === 'risk_alert') return 6
+  if (type === 'assign_owner') return 5
+  if (type === 'push_decision') return 4
   if (type === 'wrap_up') return 3
-  if (type === 'clarify') return 2
+  if (type === 'clarify') return 3
+  if (type === 'time_check') return 2
+  if (type === 'summarize') return 1
   return 1
 }
 
@@ -156,9 +194,19 @@ function isConcreteRisk(text: string) {
 
 function isActionableText(text: string) {
   const normalized = normalizeText(text)
-  if (normalized.length < 8) return false
+  if (normalized.length < 6) return false
   if (/^(这个|那个|然后|就是|可以|有点|说点|内容)+$/.test(normalized)) return false
   return true
+}
+
+function shouldSummarizeTopic(state: MeetingAgentState, topicLastSeenAt: number, now: number) {
+  if (state.events.length < AGGRESSIVE_SUMMARY_MIN_EVENTS) return false
+  if (now - topicLastSeenAt < AGGRESSIVE_TOPIC_IDLE_MS && state.events.length < AGGRESSIVE_SUMMARY_MIN_EVENTS + 3) return false
+  const unresolvedCount =
+    state.actionItems.filter((item) => item.status === 'open').length +
+    state.openLoops.filter((item) => item.status === 'open').length +
+    state.risks.filter((item) => item.status === 'open').length
+  return unresolvedCount > 0 || state.events.length >= AGGRESSIVE_SUMMARY_MIN_EVENTS + 3
 }
 
 function normalizeText(text: string) {

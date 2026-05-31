@@ -53,6 +53,17 @@ assert(candidate.type === 'risk_alert', 'high risk should outrank missing-owner 
 rememberIntervention(memory, candidate)
 assert(chooseIntervention(state, memory) === null, 'global cooldown should suppress immediate repeated intervention')
 
+const decisionState = reduceMeetingState(createInitialMeetingState(), [
+  {
+    ...baseEvent,
+    id: 'event-proposed-decision',
+    type: 'decision_proposed',
+    text: '先按灰度方案 A 推进。',
+  },
+], 1)
+const decisionCandidate = chooseIntervention(decisionState, createInterventionPolicyMemory())
+assert(decisionCandidate?.type === 'push_decision', 'aggressive mode should push even one proposed decision')
+
 const vagueRiskState = reduceMeetingState(createInitialMeetingState(), [
   {
     ...baseEvent,
