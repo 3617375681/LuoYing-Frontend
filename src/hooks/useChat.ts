@@ -1,11 +1,16 @@
 ﻿import { useCallback, useMemo, useRef, useState } from 'react'
 import { pinyin } from 'pinyin-pro'
+import { appendMeetingTranscript, summarizeCurrentMeeting } from '../services/meetingAssistant'
 import type { ChatSession, FileAttachment, Live2DAudioEvent, Live2DMood, Live2DViseme, Live2DVisemeFrame, Message } from '../types/chat'
 
 const API_BASE = import.meta.env.DEV ? '/luoying-api' : ''
 const TEXT_DRIP_INTERVAL = 46
 const AUDIO_SAFETY_GAP = 80
 const STREAM_IDLE_TIMEOUT = 90000
+
+function isMeetingSummaryRequest(text: string): boolean {
+  return /会议|纪要|总结|待办|todo|action|决策|遗留|风险|转写/.test(text) && /总结|纪要|梳理|待办|决策|遗留|风险|进展|复盘/.test(text)
+}
 
 function generateId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36)
@@ -361,6 +366,13 @@ export function useChat() {
       resetTimeline()
       const token = generationTokenRef.current
       const sessionId = ensureSession(text)
+
+      if (text.trim()) {
+        void appendMeetingTranscript(text).catch((error) => {
+          console.warn('同步会议转写失败', error)
+        })
+      }
+
       const userMessage: Message = {
         id: generateId(),
         role: 'user',
@@ -379,6 +391,22 @@ export function useChat() {
       let gotBackendEvent = false
 
       try {
+        if (isMeetingSummaryRequest(text)) {
+          const summary = await summarizeCurrentMeeting()
+          rawTextRef.current = summary
+          unsyncedTextRef.current = summary
+          await revealText(summary, Math.max(summary.length * 26, 900), token)
+          appendMessage(sessionId, {
+            id: generateId(),
+            role: 'assistant',
+            content: summary,
+            timestamp: Date.now(),
+            status: 'sent',
+          })
+          setLiveMood('gentle')
+          return
+        }
+
         const response = await fetch(`${API_BASE}/chat/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
