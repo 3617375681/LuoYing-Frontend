@@ -10,11 +10,6 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/meeting-api': {
-        target: 'http://127.0.0.1:3001',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/meeting-api/, ''),
-      },
       '/luoying-api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
