@@ -87,4 +87,28 @@ const noisyActionState = reduceMeetingState(createInitialMeetingState(), [
 ], 3)
 assert(noisyActionState.actionItems.length === 0, 'noisy ASR fragments should not become action items')
 
+const balancedActionState = reduceMeetingState(createInitialMeetingState(), [
+  {
+    ...baseEvent,
+    id: 'event-real-action-1',
+    type: 'action_created',
+    text: '张三会后同步接口权限。',
+    owner: '张三',
+  },
+  {
+    ...baseEvent,
+    id: 'event-real-action-2',
+    type: 'action_created',
+    text: '明天把灰度方案发给大家。',
+    deadline: '明天',
+  },
+  {
+    ...baseEvent,
+    id: 'event-real-action-3',
+    type: 'action_created',
+    text: '你来确认一下排期。',
+  },
+], 3)
+assert(balancedActionState.actionItems.length === 3, 'short but actionable tasks should be kept')
+
 console.log('meeting-agent self-test passed')
