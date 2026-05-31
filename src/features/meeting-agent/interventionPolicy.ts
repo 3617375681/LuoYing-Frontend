@@ -1,6 +1,6 @@
 import type { InterventionCandidate, MeetingAgentPriority, MeetingAgentState, InterventionType } from './types'
 
-const COOLDOWN_MS = 12_000
+const COOLDOWN_MS = 6_000
 const SAME_TARGET_COOLDOWN_MS = 45_000
 const MIN_RISK_TEXT_LENGTH = 10
 const AGGRESSIVE_SUMMARY_MIN_EVENTS = 4
