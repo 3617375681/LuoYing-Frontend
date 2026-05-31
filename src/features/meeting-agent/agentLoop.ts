@@ -4,8 +4,7 @@ import { createInitialMeetingState } from './meetingState'
 import { reduceMeetingState } from './reducer'
 import type { AgentLoopEvent, MeetingAgentState, TranscriptSegment } from './types'
 
-const MIN_INTERVAL_MS = 8_000
-const MIN_NEW_SEGMENTS = 3
+const MIN_INTERVAL_MS = 1_200
 const MAX_PENDING_SEGMENTS = 8
 
 export type AgentLoopListener = (event: AgentLoopEvent) => void
@@ -43,13 +42,12 @@ export class MeetingAgentLoop {
     }
     this.running = true
     this.emit({ type: 'state', state: this.state })
-    this.timer = window.setInterval(() => this.tick(), 1_000)
   }
 
   stop() {
     this.running = false
     if (this.timer !== null) {
-      window.clearInterval(this.timer)
+      window.clearTimeout(this.timer)
       this.timer = null
     }
     this.inFlight?.abort()
@@ -67,15 +65,21 @@ export class MeetingAgentLoop {
 
   pushFinal(segment: TranscriptSegment) {
     this.pendingSegments.push(segment)
-    if (this.pendingSegments.length > MAX_PENDING_SEGMENTS) {
-      this.pendingSegments = this.pendingSegments.slice(-MAX_PENDING_SEGMENTS)
-    }
+    this.scheduleTick()
+  }
+
+  private scheduleTick() {
+    if (!this.running || this.inFlight || this.timer !== null) return
+    const delay = Math.max(0, MIN_INTERVAL_MS - (Date.now() - this.lastRunAt))
+    this.timer = window.setTimeout(() => {
+      this.timer = null
+      this.tick()
+    }, delay)
   }
 
   private tick() {
     if (!this.running || this.inFlight) return
-    if (this.pendingSegments.length < MIN_NEW_SEGMENTS) return
-    if (Date.now() - this.lastRunAt < MIN_INTERVAL_MS) return
+    if (this.pendingSegments.length === 0) return
     void this.runOnce()
   }
 
@@ -105,6 +109,7 @@ export class MeetingAgentLoop {
       }
     } finally {
       this.inFlight = null
+      if (this.pendingSegments.length > 0) this.scheduleTick()
     }
   }
 

@@ -472,6 +472,40 @@ export function useChat() {
     [appendMessage, enqueueSpeech, ensureSession, flushRemainingText, isGenerating, resetTimeline, runFallbackStream, runFallbackTextLoop]
   )
 
+  const speakAsAssistant = useCallback(
+    async (text: string) => {
+      const clean = text.trim()
+      if (!clean || isGenerating) return
+
+      abortRef.current?.abort()
+      resetTimeline()
+      const token = generationTokenRef.current
+      const sessionId = ensureSession('珞樱实时参会')
+
+      setIsGenerating(true)
+      setLiveMood('thinking')
+      rawTextRef.current = clean
+      unsyncedTextRef.current = clean
+
+      try {
+        await revealText(clean, Math.max(clean.length * 58, 900), token)
+        appendMessage(sessionId, {
+          id: generateId(),
+          role: 'assistant',
+          content: clean,
+          timestamp: Date.now(),
+          status: 'sent',
+        })
+        setLiveMood('gentle')
+      } finally {
+        setIsGenerating(false)
+        await sleep(180)
+        if (generationTokenRef.current === token) setCurrentAiText('')
+      }
+    },
+    [appendMessage, ensureSession, isGenerating, resetTimeline, revealText]
+  )
+
   return {
     sessions,
     activeSessionId,
@@ -479,6 +513,7 @@ export function useChat() {
     createNewSession,
     switchSession,
     sendMessage,
+    speakAsAssistant,
     isGenerating,
     currentAiText,
     live2dVisible,

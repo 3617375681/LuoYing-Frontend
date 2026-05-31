@@ -31,6 +31,7 @@ export default function Chat() {
     createNewSession,
     switchSession,
     sendMessage,
+    speakAsAssistant,
     isGenerating,
     currentAiText,
     live2dVisible,
@@ -42,9 +43,12 @@ export default function Chat() {
   } = useChat()
 
   const meetingAgent = useMeetingAgent()
+  const meetingIntervention = meetingAgent.intervention
+  const acknowledgeMeetingIntervention = meetingAgent.acknowledgeIntervention
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const spokenInterventionRef = useRef<string | null>(null)
   const [showNewMsgIndicator, setShowNewMsgIndicator] = useState(false)
   const [userScrolledUp, setUserScrolledUp] = useState(false)
   const [isCompactLayout, setIsCompactLayout] = useState(false)
@@ -57,6 +61,18 @@ export default function Chat() {
     return () => mediaQuery.removeEventListener('change', updateLayout)
   }, [])
 
+  const handleSend = useCallback((text: string, attachments: FileAttachment[]) => {
+    void sendMessage(text, attachments)
+    setUserScrolledUp(false)
+    setShowNewMsgIndicator(false)
+  }, [sendMessage])
+
+  const handleMeetingAgentSpeak = useCallback((text: string) => {
+    void speakAsAssistant(text)
+    setUserScrolledUp(false)
+    setShowNewMsgIndicator(false)
+  }, [speakAsAssistant])
+
   // Listen for quick action events from Live2DPanel
   useEffect(() => {
     const handler = (e: Event) => {
@@ -65,7 +81,16 @@ export default function Chat() {
     }
     window.addEventListener('luoying-quick-action', handler)
     return () => window.removeEventListener('luoying-quick-action', handler)
-  })
+  }, [handleSend])
+
+  useEffect(() => {
+    const candidate = meetingIntervention?.candidate
+    if (!candidate || meetingIntervention?.acknowledged) return
+    if (spokenInterventionRef.current === candidate.id) return
+    spokenInterventionRef.current = candidate.id
+    handleMeetingAgentSpeak(candidate.text)
+    acknowledgeMeetingIntervention()
+  }, [acknowledgeMeetingIntervention, handleMeetingAgentSpeak, meetingIntervention])
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -87,11 +112,6 @@ export default function Chat() {
     if (nearBottom) setShowNewMsgIndicator(false)
   }, [])
 
-  const handleSend = (text: string, attachments: FileAttachment[]) => {
-    void sendMessage(text, attachments)
-    setUserScrolledUp(false)
-    setShowNewMsgIndicator(false)
-  }
 
   const totalMessages = activeSession?.messages.length ?? 0
   const showEmpty = totalMessages === 0 && !isGenerating
@@ -214,7 +234,7 @@ export default function Chat() {
           >
             <MeetingAgentCard
               agent={meetingAgent}
-              onAdoptIntervention={(text) => handleSend(text, [])}
+              onAdoptIntervention={handleMeetingAgentSpeak}
             />
             {showEmpty && (
               <motion.div

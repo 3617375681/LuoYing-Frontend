@@ -2,6 +2,23 @@ import type { InterventionCandidate, MeetingAgentPriority, MeetingAgentState, In
 
 const COOLDOWN_MS = 45_000
 const SAME_TARGET_COOLDOWN_MS = 120_000
+const MIN_RISK_TEXT_LENGTH = 12
+
+const VAGUE_RISK_PATTERNS = [
+  /有风险的?内容/,
+  /说点.*风险/,
+  /风险的东西/,
+  /可能有风险$/,
+  /这个.*风险$/,
+]
+
+const CONCRETE_RISK_PATTERNS = [
+  /延期|延迟|赶不上|来不及/,
+  /阻塞|卡住|依赖|拿不到|无法|不能/,
+  /返工|回滚|线上|故障|宕机|失败|报错/,
+  /权限|预算|资源|人手|接口|数据|合规|安全|法务/,
+  /影响|损失|成本|范围|用户|客户/,
+]
 
 export type InterventionPolicyMemory = {
   lastIntervenedAt: number
@@ -34,22 +51,22 @@ export function rememberIntervention(memory: InterventionPolicyMemory, candidate
 
 function buildCandidates(state: MeetingAgentState, now: number): InterventionCandidate[] {
   const candidates: InterventionCandidate[] = []
-  for (const risk of state.risks.filter((item) => item.status === 'open')) {
+  for (const risk of state.risks.filter((item) => item.status === 'open' && isConcreteRisk(item.text))) {
     candidates.push({
       id: `intervention-${now}-risk-${risk.id}`,
       type: 'risk_alert',
       priority: risk.severity,
       text: risk.severity === 'high'
         ? `我打断一下，这里有个高风险点：${risk.text}。我们要不要先明确怎么兜底，避免后面返工？`
-        : `这里可能有个风险：${risk.text}。要不要先确认一下影响范围？`,
-      reason: '检测到未解决风险。',
+        : `这里有个需要确认的风险：${risk.text}。我们先定一下影响范围和处理人吧。`,
+      reason: '检测到具体、未解决的会议风险。',
       targetIds: [risk.id],
       confidence: 0.9,
       createdAt: now,
     })
   }
 
-  for (const item of state.actionItems.filter((action) => action.status === 'open' && (!action.owner || !action.deadline))) {
+  for (const item of state.actionItems.filter((action) => action.status === 'open' && isActionableText(action.text) && (!action.owner || !action.deadline))) {
     const missing = !item.owner && !item.deadline ? '负责人和截止时间' : !item.owner ? '负责人' : '截止时间'
     candidates.push({
       id: `intervention-${now}-action-${item.id}`,
@@ -63,7 +80,7 @@ function buildCandidates(state: MeetingAgentState, now: number): InterventionCan
     })
   }
 
-  for (const loop of state.openLoops.filter((item) => item.status === 'open')) {
+  for (const loop of state.openLoops.filter((item) => item.status === 'open' && isActionableText(item.question))) {
     candidates.push({
       id: `intervention-${now}-loop-${loop.id}`,
       type: 'clarify',
@@ -78,7 +95,7 @@ function buildCandidates(state: MeetingAgentState, now: number): InterventionCan
     })
   }
 
-  const proposed = state.decisions.filter((decision) => decision.status === 'proposed')
+  const proposed = state.decisions.filter((decision) => decision.status === 'proposed' && isActionableText(decision.text))
   if (proposed.length >= 2) {
     candidates.push({
       id: `intervention-${now}-decision`,
@@ -128,4 +145,22 @@ function typeScore(type: InterventionType) {
   if (type === 'wrap_up') return 3
   if (type === 'clarify') return 2
   return 1
+}
+
+function isConcreteRisk(text: string) {
+  const normalized = normalizeText(text)
+  if (normalized.length < MIN_RISK_TEXT_LENGTH) return false
+  if (VAGUE_RISK_PATTERNS.some((pattern) => pattern.test(normalized))) return false
+  return CONCRETE_RISK_PATTERNS.some((pattern) => pattern.test(normalized))
+}
+
+function isActionableText(text: string) {
+  const normalized = normalizeText(text)
+  if (normalized.length < 8) return false
+  if (/^(这个|那个|然后|就是|可以|有点|说点|内容)+$/.test(normalized)) return false
+  return true
+}
+
+function normalizeText(text: string) {
+  return text.replace(/\s+/g, '').replace(/[，。！？、,.!?]/g, '')
 }

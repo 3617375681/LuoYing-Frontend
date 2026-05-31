@@ -53,4 +53,15 @@ assert(candidate.type === 'risk_alert', 'high risk should outrank missing-owner 
 rememberIntervention(memory, candidate)
 assert(chooseIntervention(state, memory) === null, 'global cooldown should suppress immediate repeated intervention')
 
+const vagueRiskState = reduceMeetingState(createInitialMeetingState(), [
+  {
+    ...baseEvent,
+    id: 'event-vague-risk',
+    type: 'risk_detected',
+    text: '说点有风险的内容。',
+    severity: 'medium',
+  },
+], 1)
+assert(chooseIntervention(vagueRiskState, createInterventionPolicyMemory()) === null, 'vague ASR-like risk should not trigger intervention')
+
 console.log('meeting-agent self-test passed')
