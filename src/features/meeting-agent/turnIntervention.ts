@@ -7,7 +7,7 @@ const ACTION_HINT_PATTERN = /会后|下一步|后续|待办|负责|谁来|你来
 const NOISE_PATTERN = /^(嗯+|啊+|好+|对+|然后|就是|那个|这个|可以|行|test)$/i
 
 export function chooseTurnIntervention(
-  state: MeetingAgentState,
+  _state: MeetingAgentState,
   segments: TranscriptSegment[],
 ): InterventionCandidate | null {
   const text = segments.map((segment) => segment.text).join(' ').trim()
@@ -69,19 +69,6 @@ export function chooseTurnIntervention(
     }
   }
 
-  if (shouldNudgeByConversation(state, normalized)) {
-    return {
-      id: `turn-intervention-${now}-nudge-${targetIds.join('-')}`,
-      type: 'summarize',
-      priority: 'low',
-      text: `我先轻轻插一句：这轮讨论还没沉淀成明确结论。要不要我帮大家把“当前问题、候选方案、下一步”三件事拉齐？`,
-      reason: '连续讨论但没有形成可追踪结论。',
-      targetIds,
-      confidence: 0.58,
-      createdAt: now,
-    }
-  }
-
   return null
 }
 
@@ -90,13 +77,6 @@ function buildDirectCallText(text: string) {
   if (/怎么看|建议|怎么办|怎么做/.test(text)) return '我在。我的建议是先把问题拆成三块：目标是什么、现在卡在哪里、下一步谁负责验证。这样比较快能收束。'
   if (/回答|说一下|发言|讲/.test(text)) return '我在。我先插一句：请大家把当前要我判断的问题说完整一点，我会直接给出结论、风险和下一步建议。'
   return `我在。刚才听到有人叫我：${clip(text)}。你们是希望我总结、判断风险，还是帮忙定下一步？`
-}
-
-function shouldNudgeByConversation(state: MeetingAgentState, normalizedText: string) {
-  if (normalizedText.length < 18) return false
-  const hasRecentEvents = state.events.length > 0
-  const unresolved = state.actionItems.some((item) => item.status === 'open') || state.openLoops.some((item) => item.status === 'open')
-  return !hasRecentEvents || unresolved
 }
 
 function clip(text: string) {

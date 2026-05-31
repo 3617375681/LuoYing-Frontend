@@ -19,6 +19,9 @@ type DashscopeSentence = {
   begin_time?: number
   sentence_id?: string
   sentence_end?: boolean
+  speaker_id?: string
+  speaker?: string
+  speakerId?: string
 }
 
 type DashscopePayload = {
@@ -142,6 +145,7 @@ export function createDashscopeAsrProxy(options: DashscopeAsrProxyOptions = {}):
         const sentence = message.payload?.output?.sentence
         const text = sentence?.text?.trim()
         if (!text) return
+        const speakerId = sentence?.speaker_id || sentence?.speakerId || sentence?.speaker
         client.send(
           JSON.stringify({
             type: sentence?.sentence_end ? 'final' : 'partial',
@@ -149,6 +153,7 @@ export function createDashscopeAsrProxy(options: DashscopeAsrProxyOptions = {}):
             beginMs: sentence?.begin_time,
             endMs: sentence?.end_time,
             sentenceId: sentence?.sentence_id,
+            speakerId,
           }),
         )
       }

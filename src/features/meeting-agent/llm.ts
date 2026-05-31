@@ -22,7 +22,7 @@ export async function extractMeetingEvents(
   context: string,
   signal?: AbortSignal,
 ): Promise<{ events: MeetingEvent[]; phaseHint?: MeetingPhase }> {
-  const transcript = segments.map((segment, index) => `${index + 1}. ${segment.text}`).join('\n')
+  const transcript = segments.map((segment, index) => formatTranscriptLine(segment, index)).join('\n')
   const response = await fetch('/meeting-agent/llm/extract', {
     method: 'POST',
     signal,
@@ -58,9 +58,9 @@ export async function generateInterventionSpeech(
         type: candidate.type,
         priority: candidate.priority,
         reason: candidate.reason,
-        draft: candidate.text,
+        hint: candidate.text,
       },
-      transcript: recentSegments.map((segment, index) => `${index + 1}. ${segment.text}`).join('\n'),
+      transcript: recentSegments.map((segment, index) => formatTranscriptLine(segment, index)).join('\n'),
     }),
   })
 
@@ -71,6 +71,11 @@ export async function generateInterventionSpeech(
 
   const payload = (await response.json()) as { text?: string }
   return typeof payload.text === 'string' ? payload.text.trim() : ''
+}
+
+function formatTranscriptLine(segment: TranscriptSegment, index: number) {
+  const speaker = segment.speakerId ? `[${segment.speakerId}] ` : ''
+  return `${index + 1}. ${speaker}${segment.text}`
 }
 
 function toSpeechState(state: MeetingAgentState) {

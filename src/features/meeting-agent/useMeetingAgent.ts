@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { isAsrSupported, DashscopeParaformerAsr } from './asr'
 import { MeetingAgentLoop } from './agentLoop'
-import { isLlmConfigured } from './llm'
+import { generateInterventionSpeech, isLlmConfigured } from './llm'
 import type { AgentInterventionInbox, MeetingAgentState, TranscriptSegment } from './types'
 
 const PARTIAL_ID = 'partial'
@@ -19,6 +19,7 @@ export type UseMeetingAgentResult = {
   stop: () => void
   reset: () => void
   acknowledgeIntervention: () => void
+  forceSpeak: () => Promise<string>
 }
 
 export function useMeetingAgent(): UseMeetingAgentResult {
@@ -68,6 +69,7 @@ export function useMeetingAgent(): UseMeetingAgentResult {
           text: event.text,
           isFinal: true,
           receivedAt: Date.now(),
+          speakerId: event.speakerId,
         }
         setSegments((items) => {
           const next = [...items, segment]
@@ -117,6 +119,29 @@ export function useMeetingAgent(): UseMeetingAgentResult {
     setIntervention((current) => (current ? { ...current, acknowledged: true } : current))
   }, [])
 
+  const forceSpeak = useCallback(async () => {
+    const state = latestState ?? loopRef.current?.getState()
+    if (!state) throw new Error('会议状态还没有准备好，请先开始会议并产生几段转写')
+    const recentSegments = segments.slice(-20)
+    if (recentSegments.length === 0 && !partialText.trim()) throw new Error('还没有可参考的会议内容')
+
+    const text = await generateInterventionSpeech(
+      state,
+      {
+        id: `manual-${Date.now()}`,
+        type: 'summarize',
+        priority: 'high',
+        reason: '用户手动要求珞樱基于当前会议上下文直接发言。',
+        text: '请基于当前会议上下文，直接说一句最有帮助的话。',
+        targetIds: recentSegments.map((segment) => segment.id),
+        confidence: 1,
+        createdAt: Date.now(),
+      },
+      recentSegments,
+    )
+    return text.trim()
+  }, [latestState, partialText, segments])
+
   useEffect(() => {
     void isLlmConfigured().then(setConfigured)
   }, [])
@@ -141,5 +166,6 @@ export function useMeetingAgent(): UseMeetingAgentResult {
     stop,
     reset,
     acknowledgeIntervention,
+    forceSpeak,
   }
 }

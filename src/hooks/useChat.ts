@@ -1,5 +1,6 @@
-﻿import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { pinyin } from 'pinyin-pro'
+import { LUOYING_CHAT_INTRO } from '../data/luoyingPersona'
 import type { ChatSession, FileAttachment, Live2DAudioEvent, Live2DMood, Live2DViseme, Live2DVisemeFrame, Message } from '../types/chat'
 
 const API_BASE = import.meta.env.DEV ? '/luoying-api' : ''
@@ -111,12 +112,11 @@ async function readWithIdleTimeout(
 }
 
 const FALLBACK_REPLIES: Record<string, string> = {
-  default:
-    '你好，我是珞樱，武汉大学人工智能学院的校园智能助手。我可以帮助你了解学院介绍、招生培养、科研方向、导师团队、办事流程与校园服务。请问有什么可以帮你？',
+  default: LUOYING_CHAT_INTRO,
   live2d:
-    '右侧的助手面板展示了珞樱的形象与当前服务状态，支持语音交互功能。你可以通过语音或文字与珞樱进行对话。',
+    '右侧是我的 Live2D 形象面板。你会看到我的表情、语音状态和服务模式；如果语音开启，我会一边回应，一边同步口型。',
   campus:
-    '珞樱可以帮你了解武汉大学人工智能学院的校园服务信息，包括办事指南、学术资源、校园生活等。请问你想了解哪方面？',
+    '校园相关的事可以交给我：学院介绍、招生培养、科研方向、导师团队、办事指南、学术资源，我都会尽量给你清楚、可核验的答案。',
 }
 
 const INITIAL_SESSIONS: ChatSession[] = [
@@ -129,8 +129,7 @@ const INITIAL_SESSIONS: ChatSession[] = [
       {
         id: 'welcome-1',
         role: 'assistant',
-        content:
-          '你好，我是珞樱，武汉大学人工智能学院的校园智能助手。我可以帮助你了解学院介绍、招生培养、科研方向、导师团队、办事流程与校园服务。',
+        content: LUOYING_CHAT_INTRO,
         timestamp: Date.now(),
         status: 'sent',
       },

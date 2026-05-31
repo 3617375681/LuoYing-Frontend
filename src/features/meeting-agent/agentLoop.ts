@@ -104,15 +104,24 @@ export class MeetingAgentLoop {
 
       const candidate = chooseIntervention(this.state, this.policyMemory) ?? chooseTurnIntervention(this.state, batch)
       if (candidate) {
-        const spokenText = await generateInterventionSpeech(
-          this.state,
-          candidate,
-          this.transcriptHistory.slice(-20),
-          controller.signal,
-        ).catch(() => candidate.text)
-        const enrichedCandidate = { ...candidate, text: spokenText || candidate.text }
-        rememberIntervention(this.policyMemory, enrichedCandidate)
-        this.emit({ type: 'intervention', state: this.state, candidate: enrichedCandidate })
+        let spokenText = ''
+        try {
+          spokenText = await generateInterventionSpeech(
+            this.state,
+            candidate,
+            this.transcriptHistory.slice(-20),
+            controller.signal,
+          )
+        } catch (cause) {
+          this.emit({ type: 'error', message: `会议发言生成失败：${(cause as Error).message}。请确认 dev server 已重启并挂载 /meeting-agent/llm/speak。` })
+          if (candidate.priority === 'high') spokenText = candidate.text
+        }
+
+        if (spokenText.trim()) {
+          const enrichedCandidate = { ...candidate, text: spokenText.trim() }
+          rememberIntervention(this.policyMemory, enrichedCandidate)
+          this.emit({ type: 'intervention', state: this.state, candidate: enrichedCandidate })
+        }
       }
     } catch (cause) {
       if ((cause as Error).name !== 'AbortError') {

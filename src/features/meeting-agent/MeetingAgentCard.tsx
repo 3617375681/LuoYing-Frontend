@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Clock3, Mic, MicOff, Radio, RotateCcw } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Clock3, MessageCircle, Mic, MicOff, Radio, RotateCcw } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { MeetingPhase } from './types'
 import type { UseMeetingAgentResult } from './useMeetingAgent'
@@ -6,9 +6,10 @@ import type { UseMeetingAgentResult } from './useMeetingAgent'
 type MeetingAgentCardProps = {
   agent: UseMeetingAgentResult
   onAdoptIntervention: (text: string) => void
+  onForceSpeak?: () => void
 }
 
-export default function MeetingAgentCard({ agent, onAdoptIntervention }: MeetingAgentCardProps) {
+export default function MeetingAgentCard({ agent, onAdoptIntervention, onForceSpeak }: MeetingAgentCardProps) {
   const {
     supported,
     configured,
@@ -59,6 +60,16 @@ export default function MeetingAgentCard({ agent, onAdoptIntervention }: Meeting
             : '点击右侧按钮开始一场会议，珞樱会全程旁听并追踪闭环'}
         </div>
         <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={!configured || segments.length === 0}
+            onClick={onForceSpeak}
+            className="inline-flex items-center gap-1 rounded-lg border border-[#bfdbfe] bg-white px-3 py-1.5 text-xs font-medium text-[#0067B1] hover:bg-[#f0f7ff] disabled:cursor-not-allowed disabled:opacity-60"
+            title={segments.length === 0 ? '需要先有会议转写内容' : undefined}
+          >
+            <MessageCircle size={14} />
+            直接发言
+          </button>
           {recording ? (
             <button
               type="button"

@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Bot, ChevronDown, Menu } from 'lucide-react'
+import { Bot, ChevronDown, Menu, Radio } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ChatInput from '../components/chat/ChatInput'
 import ChatMessage from '../components/chat/ChatMessage'
@@ -45,6 +45,7 @@ export default function Chat() {
   const meetingAgent = useMeetingAgent()
   const meetingIntervention = meetingAgent.intervention
   const acknowledgeMeetingIntervention = meetingAgent.acknowledgeIntervention
+  const meetingCanStart = meetingAgent.supported && meetingAgent.configured
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -72,6 +73,24 @@ export default function Chat() {
     setUserScrolledUp(false)
     setShowNewMsgIndicator(false)
   }, [speakAsAssistant])
+
+  const handleJoinMeeting = useCallback(() => {
+    if (meetingAgent.recording) {
+      meetingAgent.stop()
+      return
+    }
+    void meetingAgent.start()
+  }, [meetingAgent])
+
+  const handleMeetingAgentForceSpeak = useCallback(() => {
+    void meetingAgent.forceSpeak()
+      .then((text) => {
+        if (text.trim()) handleMeetingAgentSpeak(text)
+      })
+      .catch((cause) => {
+        console.warn('Meeting agent force speak failed.', cause)
+      })
+  }, [handleMeetingAgentSpeak, meetingAgent])
 
   // Listen for quick action events from Live2DPanel
   useEffect(() => {
@@ -217,13 +236,32 @@ export default function Chat() {
               )}
             </div>
 
-            <button
-              onClick={toggleLive2D}
-              className="rounded-lg border border-[#e2e8f0] p-2 text-[#64748b] transition-colors hover:bg-[#f8fafc] hover:text-[#0067B1] lg:hidden"
-              aria-label="打开助手面板"
-            >
-              <Bot size={18} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleJoinMeeting}
+                disabled={!meetingAgent.recording && !meetingCanStart}
+                className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition-all ${
+                  meetingAgent.recording
+                    ? 'border-rose-200 bg-rose-50 text-rose-600 shadow-[0_0_18px_rgba(244,63,94,0.16)] hover:bg-rose-100'
+                    : meetingCanStart
+                      ? 'border-[#bfdbfe] bg-[#f0f7ff] text-[#0067B1] hover:border-[#0067B1]/40 hover:bg-[#e6f2ff] hover:shadow-[0_0_18px_rgba(0,103,177,0.14)]'
+                      : 'cursor-not-allowed border-[#e2e8f0] bg-[#f8fafc] text-[#94a3b8]'
+                }`}
+                aria-label={meetingAgent.recording ? '结束珞樱参会' : '让珞樱直接参会'}
+                title={!meetingCanStart && !meetingAgent.recording ? '需要浏览器支持麦克风，并配置 DEEPSEEK_API_KEY' : undefined}
+              >
+                <Radio size={16} className={meetingAgent.recording ? 'animate-pulse' : ''} />
+                <span className="hidden sm:inline">{meetingAgent.recording ? '结束参会' : '珞樱参会'}</span>
+              </button>
+
+              <button
+                onClick={toggleLive2D}
+                className="rounded-lg border border-[#e2e8f0] p-2 text-[#64748b] transition-colors hover:bg-[#f8fafc] hover:text-[#0067B1] lg:hidden"
+                aria-label="打开助手面板"
+              >
+                <Bot size={18} />
+              </button>
+            </div>
           </div>
 
           {/* Messages */}
@@ -235,6 +273,7 @@ export default function Chat() {
             <MeetingAgentCard
               agent={meetingAgent}
               onAdoptIntervention={handleMeetingAgentSpeak}
+              onForceSpeak={handleMeetingAgentForceSpeak}
             />
             {showEmpty && (
               <motion.div
@@ -249,7 +288,7 @@ export default function Chat() {
                   你好，我是珞樱
                 </h2>
                 <p className="mt-2.5 max-w-lg text-sm leading-7 text-[#64748b]">
-                  武汉大学人工智能学院的校园智能助手。我可以帮助你了解学院介绍、招生培养、科研方向、导师团队、办事流程与校园服务。
+                  武汉大学人工智能学院的数字伙伴。我的瞳孔里有一枚小小的关机键，像轮回留下的印记；你可以问我学院信息，也可以让我陪你拆解任务、旁听会议。
                 </p>
                 <div className="mt-6 flex flex-wrap justify-center gap-2">
                   {QUICK_QUESTIONS.map((q) => (

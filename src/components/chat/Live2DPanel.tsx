@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookOpen, ChevronDown, GraduationCap, Mic, MicOff, Search, Settings2, Smile, Sparkles, Wand2, X } from 'lucide-react'
+import { BookOpen, ChevronDown, GraduationCap, Maximize2, Mic, MicOff, Minimize2, Search, Settings2, Smile, Sparkles, Wand2, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Live2DAudioEvent, Live2DMood, Live2DViseme } from '../../types/chat'
@@ -44,6 +44,17 @@ const MOTION_BY_MOOD: Partial<Record<Live2DMood, { group: string; index?: number
   excited: { group: '', index: 3 },
   sad: { group: '', index: 4 },
   angry: { group: '', index: 5 },
+}
+
+type Live2DAction = { expression?: string; motion?: { group: string; index?: number } }
+
+const ACTION_BY_INTENT: Record<string, Live2DAction> = {
+  greet: { expression: 'exp_01', motion: { group: '', index: 0 } },
+  think: { expression: 'exp_03', motion: { group: '', index: 2 } },
+  explain: { expression: 'exp_02', motion: { group: '', index: 1 } },
+  alert: { expression: 'exp_08', motion: { group: '', index: 5 } },
+  confirm: { expression: 'exp_04', motion: { group: '', index: 3 } },
+  cheer: { expression: 'exp_05', motion: { group: '', index: 3 } },
 }
 
 const VISEME_PARAM_IDS: Record<Live2DViseme, string[]> = {
@@ -101,6 +112,7 @@ export default function Live2DPanel({
   isMobile,
   onToggle,
 }: Live2DPanelProps) {
+  const rootRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const appRef = useRef<PixiApp | null>(null)
   const modelRef = useRef<Live2DModelInstance | null>(null)
@@ -118,10 +130,13 @@ export default function Live2DPanel({
   const [voiceEnabled, setVoiceEnabled] = useState(true)
   const [viewMode] = useState<ViewMode>('bust')
   const [controlsExpanded, setControlsExpanded] = useState(false)
+  const lastActionKeyRef = useRef('')
 
   const moodLabel = MOOD_LABELS[mood]
   const hasBackendAudio = Boolean(audioEvent?.audioBase64)
   const audioUnlockedRef = useRef(false)
+  const fullscreenRef = useRef(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   const tryPlayAudio = useCallback((audio: HTMLAudioElement, onStarted?: () => void) => {
     if (!voiceEnabled) {
@@ -221,16 +236,19 @@ export default function Live2DPanel({
     const naturalBounds = model.getBounds?.() ?? { x: 0, y: 0, width: model.width, height: model.height }
     const baseWidth = Math.max(naturalBounds.width, 1)
     const baseHeight = Math.max(naturalBounds.height, 1)
+    const fullscreen = fullscreenRef.current
     const fullScale = Math.min(width / baseWidth, height / baseHeight) * 0.9
-    const scale = viewMode === 'bust'
-      ? Math.min(fullScale * 1.55, width / baseWidth * 1.42)
-      : fullScale
+    const scale = fullscreen
+      ? fullScale * 0.98
+      : viewMode === 'bust'
+        ? Math.min(fullScale * 1.55, width / baseWidth * 1.42)
+        : fullScale
     model.scale.set(scale)
     model.x = 0
     model.y = 0
     const bounds = model.getBounds?.() ?? { x: 0, y: 0, width: model.width, height: model.height }
-    const targetCenterX = width * 0.5
-    const targetCenterY = viewMode === 'bust' ? height * 0.82 : height * 0.5
+    const targetCenterX = fullscreen && width >= 760 ? width * 0.42 : width * 0.5
+    const targetCenterY = fullscreen ? height * 0.54 : viewMode === 'bust' ? height * 0.82 : height * 0.5
     model.x += targetCenterX - (bounds.x + bounds.width / 2)
     model.y += targetCenterY - (bounds.y + bounds.height / 2)
   }, [viewMode])
@@ -334,6 +352,26 @@ export default function Live2DPanel({
     fitModel()
   }, [fitModel])
 
+  const playAutoAction = useCallback((text: string, sourceKey: string) => {
+    const model = modelRef.current
+    if (!model || loadState !== 'ready') return
+    const action = chooseLive2DAction(text, mood)
+    const key = `${sourceKey}:${action.expression ?? ''}:${action.motion?.group ?? ''}:${action.motion?.index ?? ''}`
+    if (lastActionKeyRef.current === key) return
+    lastActionKeyRef.current = key
+
+    if (action.expression) void model.expression?.(action.expression).catch(() => false)
+    if (action.motion) void model.motion?.(action.motion.group, action.motion.index, 3).catch(() => false)
+  }, [loadState, mood])
+
+  useEffect(() => {
+    if (!isSpeaking) return
+    const sourceKey = audioEvent?.id ?? speechText.slice(0, 24)
+    const text = audioEvent?.text || speechText
+    if (!text.trim() || !sourceKey) return
+    playAutoAction(text, sourceKey)
+  }, [audioEvent?.id, audioEvent?.text, isSpeaking, playAutoAction, speechText])
+
   useEffect(() => {
     const expression = EXPRESSION_BY_MOOD[mood]
     const motion = MOTION_BY_MOOD[mood]
@@ -350,8 +388,11 @@ export default function Live2DPanel({
       return () => clearTimeout(timer)
     }
 
-    setShowSpeech(true)
-    setDisplaySpeech(speechText.slice(-86))
+    const timer = setTimeout(() => {
+      setShowSpeech(true)
+      setDisplaySpeech(speechText.slice(-86))
+    }, 0)
+    return () => clearTimeout(timer)
   }, [speechText])
 
   useEffect(() => {
@@ -379,8 +420,10 @@ export default function Live2DPanel({
     const chunkMs = audioEvent.chunkMs || 20
     let mouthLoopStarted = false
 
-    setShowSpeech(true)
-    setDisplaySpeech(audioEvent.text)
+    const showAudioTextTimer = setTimeout(() => {
+      setShowSpeech(true)
+      setDisplaySpeech(audioEvent.text)
+    }, 0)
     const frame = () => {
       if (stopped) return
       const elapsed = performance.now() - startedAt
@@ -409,6 +452,7 @@ export default function Live2DPanel({
 
     audio.addEventListener('ended', () => setMouth(0))
     return () => {
+      clearTimeout(showAudioTextTimer)
       stopped = true
       audio.removeEventListener('canplay', playAudio)
       audio.pause()
@@ -456,6 +500,51 @@ export default function Live2DPanel({
     setMouth(0)
   }, [isSpeaking, setMouth])
 
+  useEffect(() => {
+    fullscreenRef.current = isFullscreen
+    requestAnimationFrame(fitModel)
+    const timer = setTimeout(fitModel, 180)
+    return () => clearTimeout(timer)
+  }, [fitModel, isFullscreen])
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const active = document.fullscreenElement === rootRef.current
+      fullscreenRef.current = active
+      setIsFullscreen(active)
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  }, [])
+
+  useEffect(() => {
+    if (!isFullscreen) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isFullscreen])
+
+  const toggleFullscreen = useCallback(() => {
+    const root = rootRef.current
+    if (!root) return
+
+    if (isFullscreen) {
+      fullscreenRef.current = false
+      setIsFullscreen(false)
+      if (document.fullscreenElement) {
+        void document.exitFullscreen().catch((error) => console.warn('Exit Live2D fullscreen failed.', error))
+      }
+      return
+    }
+
+    fullscreenRef.current = true
+    setIsFullscreen(true)
+    const fullscreenPromise = root.requestFullscreen?.()
+    fullscreenPromise?.catch((error) => console.warn('Enter Live2D fullscreen failed; using overlay mode.', error))
+  }, [isFullscreen])
+
   const statusLabel = useMemo(() => {
     if (loadState === 'loading') return '加载中'
     if (loadState === 'error') return '加载失败'
@@ -473,7 +562,14 @@ export default function Live2DPanel({
   }, [])
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-[#e2e8f0] bg-white shadow-sm">
+    <div
+      ref={rootRef}
+      className={`flex flex-col overflow-hidden bg-white shadow-sm ${
+        isFullscreen
+          ? 'fixed inset-0 z-[90] h-[100dvh] w-screen rounded-none border-0'
+          : 'h-full rounded-xl border border-[#e2e8f0]'
+      }`}
+    >
       {isMobile && (
         <div className="flex items-center justify-between border-b border-[#e8ecf1] px-4 py-3">
           <span className="font-display text-base font-semibold text-[#1e293b]">珞樱助手</span>
@@ -489,11 +585,55 @@ export default function Live2DPanel({
 
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Character Display Area */}
-        <div className="relative min-h-[320px] flex-1 bg-gradient-to-b from-[#f8fbff] to-[#f0f7ff]">
+        <div
+          className={`relative flex-1 overflow-hidden ${
+            isFullscreen
+              ? 'min-h-0 bg-[radial-gradient(circle_at_38%_24%,rgba(180,220,255,0.72),transparent_34%),linear-gradient(135deg,#f8fbff_0%,#eef7ff_48%,#eaf4ff_100%)]'
+              : 'min-h-[320px] bg-gradient-to-b from-[#f8fbff] to-[#f0f7ff]'
+          }`}
+        >
+          <div className="pointer-events-none absolute inset-0 z-0">
+            <div className="absolute left-1/2 top-[46%] h-52 w-52 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#0067B1]/10 bg-[#0067B1]/[0.03] shadow-[0_0_70px_rgba(0,103,177,0.18)]" />
+            {[0, 1, 2].map((index) => (
+              <motion.div
+                key={index}
+                className="absolute left-1/2 top-[48%] rounded-full border border-[#E36A95]/20"
+                style={{ width: 190 + index * 58, height: 190 + index * 58, marginLeft: -(190 + index * 58) / 2, marginTop: -(190 + index * 58) / 2 }}
+                animate={{ rotate: index % 2 ? -360 : 360, scale: isSpeaking ? [1, 1.035, 1] : 1 }}
+                transition={{ rotate: { duration: 18 + index * 6, repeat: Infinity, ease: 'linear' }, scale: { duration: 1.4, repeat: Infinity } }}
+              />
+            ))}
+            <motion.div
+              className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#0067B1]/35 to-transparent"
+              animate={{ y: ['18px', '300px', '18px'], opacity: [0.15, 0.7, 0.15] }}
+              transition={{ duration: 4.6, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <div className="absolute inset-0 bg-[linear-gradient(rgba(0,103,177,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(0,103,177,0.035)_1px,transparent_1px)] bg-[size:38px_38px] opacity-60" />
+          </div>
+
+          <div className="pointer-events-none absolute left-3 top-3 z-20 rounded-full border border-[#bfdbfe] bg-white/72 px-3 py-1.5 shadow-sm backdrop-blur-md">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#0067B1]">
+              <span className={`h-1.5 w-1.5 rounded-full ${isSpeaking ? 'animate-pulse bg-[#E36A95]' : 'bg-emerald-400'}`} />
+              Neural Sync · {moodLabel}
+            </div>
+          </div>
+
+          <div className="pointer-events-none absolute bottom-4 left-4 z-20 flex items-end gap-1.5 rounded-full border border-white/70 bg-white/62 px-3 py-2 shadow-sm backdrop-blur-md">
+            {[0, 1, 2, 3, 4].map((index) => (
+              <motion.span
+                key={index}
+                className="block w-1 rounded-full bg-[#0067B1]/70"
+                animate={{ height: isSpeaking ? [6, 18 + (index % 3) * 6, 8] : [6, 9, 6], opacity: isSpeaking ? [0.45, 1, 0.55] : 0.45 }}
+                transition={{ duration: 0.72, repeat: Infinity, delay: index * 0.08, ease: 'easeInOut' }}
+              />
+            ))}
+            <span className="ml-1 text-[10px] font-medium text-[#64748b]">VOICE</span>
+          </div>
+
           <div ref={containerRef} className="absolute inset-0 z-[1]" />
 
           {loadState !== 'ready' && (
-            <div className="absolute inset-0 grid place-items-center bg-white/80 text-center">
+            <div className="absolute inset-0 z-30 grid place-items-center bg-white/80 text-center">
               <div>
                 <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-[#0067B1] border-t-transparent" />
                 <p className="text-sm text-[#64748b]">
@@ -506,12 +646,16 @@ export default function Live2DPanel({
           <AnimatePresence>
             {showSpeech && displaySpeech && (
               <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 6 }}
-                className="absolute bottom-3 left-3 right-3 z-20 rounded-lg border border-[#e2e8f0] bg-white/95 px-3 py-2.5 text-[#1e293b] shadow-lg backdrop-blur-sm"
+                initial={{ opacity: 0, x: 12, y: 4 }}
+                animate={{ opacity: 1, x: 0, y: 0 }}
+                exit={{ opacity: 0, x: 8, y: 4 }}
+                className={`absolute z-30 rounded-2xl border border-[#dbeafe] bg-white/95 text-[#1e293b] shadow-[0_18px_50px_rgba(15,23,42,0.14)] backdrop-blur-md after:absolute after:left-[-7px] after:top-8 after:h-4 after:w-4 after:rotate-45 after:border-b after:border-l after:border-[#dbeafe] after:bg-white/95 ${
+                  isFullscreen
+                    ? 'left-4 right-4 top-4 px-5 py-4 sm:left-[52%] sm:right-auto sm:top-[22%] sm:max-w-[min(36rem,38vw)]'
+                    : 'right-3 top-14 max-w-[230px] px-3 py-2.5'
+                }`}
               >
-                <p className="line-clamp-2 text-xs leading-5">{displaySpeech}</p>
+                <p className={`${isFullscreen ? 'line-clamp-4 text-sm leading-7' : 'line-clamp-3 text-xs leading-5'}`}>{displaySpeech}</p>
               </motion.div>
             )}
           </AnimatePresence>
@@ -526,31 +670,43 @@ export default function Live2DPanel({
               <span className="text-xs text-[#94a3b8]">· {moodLabel}</span>
             )}
           </div>
-          <button
-            onClick={() => setVoiceEnabled((enabled) => !enabled)}
-            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
-              voiceEnabled
-                ? 'bg-[#f0f7ff] text-[#0067B1]'
-                : 'bg-[#f8fafc] text-[#94a3b8]'
-            }`}
-          >
-            {voiceEnabled ? <Mic size={13} /> : <MicOff size={13} />}
-            {voiceEnabled ? '语音' : '静音'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setVoiceEnabled((enabled) => !enabled)}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                voiceEnabled
+                  ? 'bg-[#f0f7ff] text-[#0067B1]'
+                  : 'bg-[#f8fafc] text-[#94a3b8]'
+              }`}
+            >
+              {voiceEnabled ? <Mic size={13} /> : <MicOff size={13} />}
+              {voiceEnabled ? '语音' : '静音'}
+            </button>
+            <button
+              onClick={toggleFullscreen}
+              className="flex items-center gap-1.5 rounded-lg bg-[#f8fafc] px-2.5 py-1.5 text-xs font-medium text-[#64748b] transition-colors hover:bg-[#f0f7ff] hover:text-[#0067B1]"
+              aria-label={isFullscreen ? '退出 Live2D 全屏' : '全屏显示 Live2D'}
+            >
+              {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+              {isFullscreen ? '退出' : '全屏'}
+            </button>
+          </div>
         </div>
 
-        {/* Service Mode */}
-        <div className="border-t border-[#e8ecf1] px-4 py-2.5">
+        {!isFullscreen && (
+          <>
+            {/* Service Mode */}
+            <div className="border-t border-[#e8ecf1] px-4 py-2.5">
           <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-[#94a3b8]">当前服务</p>
           <div className="flex flex-wrap gap-1.5">
             <span className="rounded-md bg-[#f0f4fa] px-2.5 py-1 text-[11px] font-medium text-[#0067B1]">学院问答</span>
             <span className="rounded-md bg-[#f8fafc] px-2.5 py-1 text-[11px] text-[#64748b]">实时检索</span>
             <span className="rounded-md bg-[#f8fafc] px-2.5 py-1 text-[11px] text-[#64748b]">语音回复</span>
           </div>
-        </div>
+            </div>
 
-        {/* Scrollable Controls Area */}
-        <div className="overflow-y-auto border-t border-[#e8ecf1]">
+            {/* Scrollable Controls Area */}
+            <div className="overflow-y-auto border-t border-[#e8ecf1]">
           {/* Collapsible Interaction Controls */}
           <button
             onClick={() => setControlsExpanded((v) => !v)}
@@ -625,10 +781,26 @@ export default function Live2DPanel({
               />
             </div>
           </div>
-        </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
+}
+
+function chooseLive2DAction(text: string, mood: Live2DMood): Live2DAction {
+  if (/你好|大家好|我是珞樱|我在/.test(text)) return ACTION_BY_INTENT.greet
+  if (/风险|阻塞|延期|注意|打断|问题|卡住|失败|报错/.test(text)) return ACTION_BY_INTENT.alert
+  if (/我建议|可以先|拆成|原因|因为|说明|解释|看起来/.test(text)) return ACTION_BY_INTENT.explain
+  if (/确认|结论|决定|拍板|按这个|没异议|我先按/.test(text)) return ACTION_BY_INTENT.confirm
+  if (/太好了|完成|通过|不错|可以了/.test(text)) return ACTION_BY_INTENT.cheer
+  if (/想|判断|分析|可能|要不要|怎么办|怎么/.test(text)) return ACTION_BY_INTENT.think
+
+  return {
+    expression: EXPRESSION_BY_MOOD[mood],
+    motion: MOTION_BY_MOOD[mood],
+  }
 }
 
 function QuickServiceButton({ icon, label, onClick }: { icon: ReactNode; label: string; onClick?: () => void }) {

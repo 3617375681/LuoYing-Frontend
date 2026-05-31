@@ -9,8 +9,8 @@ export function isAsrSupported(): boolean {
 
 export type AsrEvent =
   | { type: 'ready' }
-  | { type: 'partial'; text: string }
-  | { type: 'final'; text: string }
+  | { type: 'partial'; text: string; speakerId?: string }
+  | { type: 'final'; text: string; speakerId?: string }
   | { type: 'error'; message: string }
   | { type: 'end' }
 
@@ -18,8 +18,8 @@ export type AsrListener = (event: AsrEvent) => void
 
 type ServerEvent =
   | { type: 'ready' }
-  | { type: 'partial'; text: string }
-  | { type: 'final'; text: string }
+  | { type: 'partial'; text: string; speakerId?: string }
+  | { type: 'final'; text: string; speakerId?: string }
   | { type: 'error'; message: string }
   | { type: 'closed'; reason?: string }
 
@@ -124,8 +124,8 @@ export class DashscopeParaformerAsr {
       return
     }
     if (event.type === 'ready') this.emit({ type: 'ready' })
-    else if (event.type === 'partial') this.emit({ type: 'partial', text: event.text })
-    else if (event.type === 'final') this.emit({ type: 'final', text: event.text })
+    else if (event.type === 'partial') this.emit({ type: 'partial', text: event.text, speakerId: event.speakerId })
+    else if (event.type === 'final') this.emit({ type: 'final', text: event.text, speakerId: event.speakerId })
     else if (event.type === 'error') this.emit({ type: 'error', message: event.message })
     else if (event.type === 'closed') this.emit({ type: 'end' })
   }

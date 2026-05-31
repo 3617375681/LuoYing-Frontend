@@ -105,18 +105,11 @@ public/meeting-agent/
 - `push_decision`：多个 proposed decision 未收敛时提醒。
 - `wrap_up`：会议收尾但仍有待办/开环时提醒。
 
-默认冷却：
-
-```ts
-COOLDOWN_MS = 45_000
-SAME_TARGET_COOLDOWN_MS = 120_000
-MIN_INTERVAL_MS = 8_000
-MIN_NEW_SEGMENTS = 3
-```
+默认冷却以代码为准，当前偏主动：每个 final ASR 片段都会触发 Agent Loop 的短间隔分析；策略侧保留全局冷却和同目标冷却，避免同一事项连续刷屏。
 
 ## 限制
 
 - 当前 ASR 与 LLM 代理挂在 Vite dev server 上，适合本地开发；生产部署需要把 `viteDashscopeAsrProxy.ts` / `viteMeetingAgentLlmProxy.ts` 挪到正式 Node/API 服务或边缘函数。
 - DeepSeek / DashScope key 只在 Vite server 侧读取，不打包进浏览器。
-- 目前没有声纹分离 / 说话人 diarization，所有转写进入同一会议流。
+- 当前代码已兼容透传 DashScope 返回里的 `speaker_id` / `speakerId` / `speaker` 字段，并会写入 `TranscriptSegment.speakerId`；但 `paraformer-realtime-v2` 这条实时链路目前未验证会返回说话人分离字段。如果上游不返回 speaker 字段，前端不能凭空做真实声纹级分角色，只能做文本级 owner/角色推断。
 - 无持久化，刷新页面会清空当前会议状态。
