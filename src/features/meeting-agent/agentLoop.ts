@@ -1,7 +1,8 @@
 import { createInterventionPolicyMemory, chooseIntervention, rememberIntervention } from './interventionPolicy'
-import { extractMeetingEvents, isLlmConfigured } from './llm'
+import { extractMeetingEvents, generateInterventionSpeech, isLlmConfigured } from './llm'
 import { createInitialMeetingState } from './meetingState'
 import { reduceMeetingState } from './reducer'
+import { chooseTurnIntervention } from './turnIntervention'
 import type { AgentLoopEvent, MeetingAgentState, TranscriptSegment } from './types'
 
 const MIN_INTERVAL_MS = 1_200
@@ -12,6 +13,7 @@ export type AgentLoopListener = (event: AgentLoopEvent) => void
 export class MeetingAgentLoop {
   private state = createInitialMeetingState()
   private pendingSegments: TranscriptSegment[] = []
+  private transcriptHistory: TranscriptSegment[] = []
   private listeners = new Set<AgentLoopListener>()
   private timer: number | null = null
   private running = false
@@ -58,12 +60,15 @@ export class MeetingAgentLoop {
     this.stop()
     this.state = createInitialMeetingState()
     this.pendingSegments = []
+    this.transcriptHistory = []
     this.lastRunAt = 0
     this.policyMemory = createInterventionPolicyMemory()
     this.configured = false
   }
 
   pushFinal(segment: TranscriptSegment) {
+    this.transcriptHistory.push(segment)
+    if (this.transcriptHistory.length > 80) this.transcriptHistory = this.transcriptHistory.slice(-80)
     this.pendingSegments.push(segment)
     this.scheduleTick()
   }
@@ -92,15 +97,22 @@ export class MeetingAgentLoop {
     const batch = this.pendingSegments.splice(0)
 
     try {
-      const result = await extractMeetingEvents(batch, buildContext(this.state), controller.signal)
+      const result = await extractMeetingEvents(batch, buildContext(this.state, this.transcriptHistory), controller.signal)
       const nextState = reduceMeetingState(this.state, result.events, batch.length)
       this.state = result.phaseHint ? { ...nextState, phase: result.phaseHint } : nextState
       this.emit({ type: 'state', state: this.state })
 
-      const candidate = chooseIntervention(this.state, this.policyMemory)
+      const candidate = chooseIntervention(this.state, this.policyMemory) ?? chooseTurnIntervention(this.state, batch)
       if (candidate) {
-        rememberIntervention(this.policyMemory, candidate)
-        this.emit({ type: 'intervention', state: this.state, candidate })
+        const spokenText = await generateInterventionSpeech(
+          this.state,
+          candidate,
+          this.transcriptHistory.slice(-20),
+          controller.signal,
+        ).catch(() => candidate.text)
+        const enrichedCandidate = { ...candidate, text: spokenText || candidate.text }
+        rememberIntervention(this.policyMemory, enrichedCandidate)
+        this.emit({ type: 'intervention', state: this.state, candidate: enrichedCandidate })
       }
     } catch (cause) {
       if ((cause as Error).name !== 'AbortError') {
@@ -124,7 +136,7 @@ export class MeetingAgentLoop {
   }
 }
 
-function buildContext(state: MeetingAgentState) {
+function buildContext(state: MeetingAgentState, recentSegments: TranscriptSegment[]) {
   const topic = state.topics.find((item) => item.id === state.currentTopicId)
   const openActions = state.actionItems.filter((item) => item.status === 'open').slice(-5)
   const openLoops = state.openLoops.filter((item) => item.status === 'open').slice(-5)
@@ -136,5 +148,6 @@ function buildContext(state: MeetingAgentState) {
     `openActions=${openActions.map((item) => item.text).join(' | ')}`,
     `openLoops=${openLoops.map((item) => item.question).join(' | ')}`,
     `openRisks=${openRisks.map((item) => item.text).join(' | ')}`,
+    `recentTranscript=${recentSegments.slice(-12).map((segment) => segment.text).join(' / ')}`,
   ].join('\n')
 }

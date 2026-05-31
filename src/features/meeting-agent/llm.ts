@@ -1,5 +1,5 @@
 import { shouldKeepActionItem } from './actionHeuristics'
-import type { MeetingAgentPriority, MeetingEvent, MeetingEventType, MeetingPhase, TranscriptSegment } from './types'
+import type { InterventionCandidate, MeetingAgentPriority, MeetingAgentState, MeetingEvent, MeetingEventType, MeetingPhase, TranscriptSegment } from './types'
 
 type ExtractedPayload = {
   events?: Array<Partial<MeetingEvent> & { type?: string }>
@@ -39,6 +39,50 @@ export async function extractMeetingEvents(
   return {
     events: normalizeEvents(parsed.events, segments),
     phaseHint: parsed.phaseHint,
+  }
+}
+
+export async function generateInterventionSpeech(
+  state: MeetingAgentState,
+  candidate: InterventionCandidate,
+  recentSegments: TranscriptSegment[],
+  signal?: AbortSignal,
+): Promise<string> {
+  const response = await fetch('/meeting-agent/llm/speak', {
+    method: 'POST',
+    signal,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      state: toSpeechState(state),
+      candidate: {
+        type: candidate.type,
+        priority: candidate.priority,
+        reason: candidate.reason,
+        draft: candidate.text,
+      },
+      transcript: recentSegments.map((segment, index) => `${index + 1}. ${segment.text}`).join('\n'),
+    }),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '')
+    throw new Error(`会议发言生成失败 ${response.status}: ${errorText.slice(0, 200)}`)
+  }
+
+  const payload = (await response.json()) as { text?: string }
+  return typeof payload.text === 'string' ? payload.text.trim() : ''
+}
+
+function toSpeechState(state: MeetingAgentState) {
+  const topic = state.topics.find((item) => item.id === state.currentTopicId)
+  return {
+    phase: state.phase,
+    currentTopic: topic?.title ?? '',
+    summary: state.summary,
+    decisions: state.decisions.slice(-5).map((item) => item.text),
+    actionItems: state.actionItems.filter((item) => item.status === 'open').slice(-5),
+    openLoops: state.openLoops.filter((item) => item.status === 'open').slice(-5),
+    risks: state.risks.filter((item) => item.status === 'open').slice(-5),
   }
 }
 
