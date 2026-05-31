@@ -6,6 +6,8 @@ import ChatMessage from '../components/chat/ChatMessage'
 import ChatSidebar from '../components/chat/ChatSidebar'
 import Live2DPanel from '../components/chat/Live2DPanel'
 import TypingIndicator from '../components/chat/TypingIndicator'
+import MeetingAgentCard from '../features/meeting-agent/MeetingAgentCard'
+import { useMeetingAgent } from '../features/meeting-agent/useMeetingAgent'
 import { useChat } from '../hooks/useChat'
 import type { FileAttachment } from '../types/chat'
 
@@ -38,6 +40,8 @@ export default function Chat() {
     sidebarOpen,
     toggleSidebar,
   } = useChat()
+
+  const meetingAgent = useMeetingAgent()
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -208,6 +212,10 @@ export default function Chat() {
             onScroll={handleScroll}
             className="relative flex-1 overflow-y-auto px-4 py-6 sm:px-6 xl:px-8"
           >
+            <MeetingAgentCard
+              agent={meetingAgent}
+              onAdoptIntervention={(text) => handleSend(text, [])}
+            />
             {showEmpty && (
               <motion.div
                 initial={{ opacity: 0, y: 16 }}

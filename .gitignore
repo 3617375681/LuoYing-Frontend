@@ -6,3 +6,5 @@ dist
 artifacts/
 screenshot-*.png
 info.md
+.env.local
+.env.*.local
