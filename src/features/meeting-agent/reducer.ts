@@ -13,6 +13,23 @@ import type {
 const MAX_EVENTS = 120
 const MAX_EVIDENCE = 6
 
+const ACTION_TRIGGER_PATTERNS = [
+  /待办|todo|action\s*item/i,
+  /会后|下一步|后续|下次|明天|今天|本周|周[一二三四五六日天]|月底|上线前|开会前/,
+  /负责|owner|谁来|你来|我来|他来|她来|我们来|麻烦|请.*一下/,
+  /整理|确认|补充|提交|发送|同步|测试|部署|联系|排期|拉齐|跟进|落地|推进|发给|更新|修复|接入|配置|创建|加上/,
+]
+
+const BAD_ACTION_PATTERNS = [
+  /^(决策)?[一二三四五六七八九十0-9]*代办$/,
+  /^(决策|待办|代办|任务|事项)[一二三四五六七八九十0-9]*$/,
+  /每一个说话人.*(方法|办法)?$/,
+  /说话人啊/,
+  /小白的方法/,
+  /^(就是|然后|可以|那个|这个|有点|说点)+/,
+  /^(珞樱|洛英|落英)[，,]?.*(发言|回答|说一下|来讲|发个号|插话)/,
+]
+
 export function reduceMeetingState(
   previous: MeetingAgentState,
   events: MeetingEvent[],
@@ -123,6 +140,8 @@ function upsertDecision(state: MeetingAgentState, event: MeetingEvent): MeetingA
 }
 
 function upsertActionItem(state: MeetingAgentState, event: MeetingEvent): MeetingAgentState {
+  if (!isValidActionItem(event.text, event.owner)) return state
+
   const existing = findSimilar(state.actionItems, event.text, (item) => item.text)
   const status: MeetingActionItem['status'] = event.type === 'action_completed' ? 'done' : 'open'
 
@@ -276,6 +295,14 @@ function findSimilar<T>(items: T[], text: string, pick: (item: T) => string): T 
     const other = normalize(pick(item))
     return other === key || other.includes(key) || key.includes(other)
   })
+}
+
+function isValidActionItem(text: string, owner?: string): boolean {
+  const normalized = normalize(text)
+  if (normalized.length < 6) return false
+  if (BAD_ACTION_PATTERNS.some((pattern) => pattern.test(normalized))) return false
+  if (owner && /^(珞樱|洛英|落英)$/.test(owner.trim()) && /发言|回答|发个号|说一下/.test(normalized)) return false
+  return ACTION_TRIGGER_PATTERNS.some((pattern) => pattern.test(text))
 }
 
 function normalize(text: string) {

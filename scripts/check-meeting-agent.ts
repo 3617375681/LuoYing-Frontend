@@ -64,4 +64,27 @@ const vagueRiskState = reduceMeetingState(createInitialMeetingState(), [
 ], 1)
 assert(chooseIntervention(vagueRiskState, createInterventionPolicyMemory()) === null, 'vague ASR-like risk should not trigger intervention')
 
+const noisyActionState = reduceMeetingState(createInitialMeetingState(), [
+  {
+    ...baseEvent,
+    id: 'event-noisy-action-1',
+    type: 'action_created',
+    text: '决策一代办',
+  },
+  {
+    ...baseEvent,
+    id: 'event-noisy-action-2',
+    type: 'action_created',
+    text: '洛英，你来发个号吧',
+    owner: '洛英',
+  },
+  {
+    ...baseEvent,
+    id: 'event-noisy-action-3',
+    type: 'action_created',
+    text: '每一个说话人啊开会前加一个小白的方法',
+  },
+], 3)
+assert(noisyActionState.actionItems.length === 0, 'noisy ASR fragments should not become action items')
+
 console.log('meeting-agent self-test passed')
