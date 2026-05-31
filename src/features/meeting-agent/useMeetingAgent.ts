@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { isAsrSupported, DashscopeParaformerAsr } from './asr'
-import { MeetingAgentEvaluator } from './evaluator'
-import { readLlmConfig } from './llm'
+import { MeetingAgentLoop } from './agentLoop'
+import { isLlmConfigured } from './llm'
 import type { AgentInterventionInbox, MeetingAgentState, TranscriptSegment } from './types'
 
 const PARTIAL_ID = 'partial'
@@ -15,7 +15,7 @@ export type UseMeetingAgentResult = {
   partialText: string
   latestState: MeetingAgentState | null
   intervention: AgentInterventionInbox | null
-  start: () => void
+  start: () => Promise<void>
   stop: () => void
   reset: () => void
   acknowledgeIntervention: () => void
@@ -28,11 +28,12 @@ export function useMeetingAgent(): UseMeetingAgentResult {
   const [partialText, setPartialText] = useState('')
   const [latestState, setLatestState] = useState<MeetingAgentState | null>(null)
   const [intervention, setIntervention] = useState<AgentInterventionInbox | null>(null)
+  const [configured, setConfigured] = useState(false)
 
   const asrRef = useRef<DashscopeParaformerAsr | null>(null)
-  const evaluatorRef = useRef<MeetingAgentEvaluator | null>(null)
+  const loopRef = useRef<MeetingAgentLoop | null>(null)
 
-  const start = useCallback(() => {
+  const start = useCallback(async () => {
     if (asrRef.current) return
     if (!isAsrSupported()) {
       setError('当前浏览器不支持麦克风 AudioWorklet 采集')
@@ -40,15 +41,19 @@ export function useMeetingAgent(): UseMeetingAgentResult {
     }
     setError('')
 
-    const evaluator = new MeetingAgentEvaluator()
-    evaluator.on((event) => {
+    const loop = new MeetingAgentLoop()
+    loop.on((event) => {
       if (event.type === 'state') setLatestState(event.state)
       else if (event.type === 'intervention')
-        setIntervention({ state: event.state, receivedAt: Date.now(), acknowledged: false })
+        setIntervention({ candidate: event.candidate, receivedAt: Date.now(), acknowledged: false })
       else if (event.type === 'error') setError(event.message)
     })
-    evaluator.start()
-    evaluatorRef.current = evaluator
+    await loop.start()
+    if (!loop.isRunning()) {
+      loopRef.current = null
+      return
+    }
+    loopRef.current = loop
 
     const asr = new DashscopeParaformerAsr()
     asr.on((event) => {
@@ -68,14 +73,20 @@ export function useMeetingAgent(): UseMeetingAgentResult {
           const next = [...items, segment]
           return next.length > 200 ? next.slice(next.length - 200) : next
         })
-        evaluatorRef.current?.pushFinal(segment)
+        loopRef.current?.pushFinal(segment)
       } else if (event.type === 'error') {
         setError(event.message)
       } else if (event.type === 'end') {
         setRecording(false)
       }
     })
-    asr.start()
+
+    const ok = await asr.start()
+    if (!ok) {
+      loop.stop()
+      loopRef.current = null
+      return
+    }
     asrRef.current = asr
     setRecording(true)
   }, [])
@@ -83,8 +94,8 @@ export function useMeetingAgent(): UseMeetingAgentResult {
   const stop = useCallback(() => {
     asrRef.current?.stop()
     asrRef.current = null
-    evaluatorRef.current?.stop()
-    evaluatorRef.current = null
+    loopRef.current?.stop()
+    loopRef.current = null
     setRecording(false)
     setPartialText('')
   }, [])
@@ -92,8 +103,8 @@ export function useMeetingAgent(): UseMeetingAgentResult {
   const reset = useCallback(() => {
     asrRef.current?.stop()
     asrRef.current = null
-    evaluatorRef.current?.reset()
-    evaluatorRef.current = null
+    loopRef.current?.reset()
+    loopRef.current = null
     setRecording(false)
     setSegments([])
     setPartialText('')
@@ -107,15 +118,19 @@ export function useMeetingAgent(): UseMeetingAgentResult {
   }, [])
 
   useEffect(() => {
+    void isLlmConfigured().then(setConfigured)
+  }, [])
+
+  useEffect(() => {
     return () => {
       asrRef.current?.stop()
-      evaluatorRef.current?.stop()
+      loopRef.current?.stop()
     }
   }, [])
 
   return {
     supported: isAsrSupported(),
-    configured: readLlmConfig() !== null,
+    configured,
     recording,
     error,
     segments,

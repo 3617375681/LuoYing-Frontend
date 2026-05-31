@@ -37,11 +37,11 @@ export class DashscopeParaformerAsr {
     return () => this.listeners.delete(listener)
   }
 
-  async start() {
-    if (this.socket) return
+  async start(): Promise<boolean> {
+    if (this.socket) return true
     if (!isAsrSupported()) {
       this.emit({ type: 'error', message: '当前浏览器不支持麦克风 AudioWorklet 采集' })
-      return
+      return false
     }
 
     this.shouldRun = true
@@ -88,9 +88,11 @@ export class DashscopeParaformerAsr {
       this.audioContext = audioContext
       this.source = source
       this.worklet = worklet
+      return true
     } catch (cause) {
       this.stop()
       this.emit({ type: 'error', message: (cause as Error).message })
+      return false
     }
   }
 

@@ -1,111 +1,99 @@
-import type { MeetingAgentState } from './types'
+import type { MeetingAgentPriority, MeetingEvent, MeetingEventType, MeetingPhase, TranscriptSegment } from './types'
 
-const DEFAULT_BASE_URL = 'https://api.deepseek.com/v1'
-const DEFAULT_MODEL = 'deepseek-chat'
+type ExtractedPayload = {
+  events?: Array<Partial<MeetingEvent> & { type?: string }>
+  phaseHint?: MeetingPhase
+}
 
-const SYSTEM_PROMPT = `你是珞樱，一名实时陪会助手。
-任务：根据会议转写片段，判断会议状态，并决定是否需要在聊天里主动开口提醒。
-
-只输出 JSON，schema 如下：
-{
-  "phase": "idle | discussion | decision | blocked | wrap_up",
-  "currentTopic": "本段对话的核心议题（若不明则空串）",
-  "summary": "30~80 字概括目前讨论",
-  "decisions": ["已经达成的决策（无则空数组）"],
-  "actionItems": ["明确的待办（含负责人/时间为佳）"],
-  "openLoops": ["被提及但未结论的问题"],
-  "risks": ["可能阻塞或返工的风险"],
-  "intervention": {
-    "shouldIntervene": false,
-    "priority": "low | medium | high",
-    "reason": "为什么需要 / 不需要介入",
-    "suggestedText": "如果介入，给珞樱要说的口语化中文短句（一两句）；不介入则空串"
+export async function isLlmConfigured(): Promise<boolean> {
+  try {
+    const response = await fetch('/meeting-agent/llm/config')
+    if (!response.ok) return false
+    const payload = (await response.json()) as { configured?: boolean }
+    return Boolean(payload.configured)
+  } catch {
+    return false
   }
 }
 
-介入克制原则：
-- 仅在以下情况 shouldIntervene=true：① 待办无负责人/时限；② 跑题超过 1 分钟；③ 出现明显风险或矛盾；④ 决策遗漏关键利益方；⑤ 会议陷入循环。
-- 同一议题刚介入过则不要重复介入。
-- 文字必须是口语化中文，像同事一样自然提醒。`
-
-export type LlmConfig = {
-  apiKey: string
-  baseUrl?: string
-  model?: string
-}
-
-export function readLlmConfig(): LlmConfig | null {
-  const apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY as string | undefined
-  if (!apiKey) return null
-  return {
-    apiKey,
-    baseUrl: (import.meta.env.VITE_DEEPSEEK_BASE_URL as string | undefined) ?? DEFAULT_BASE_URL,
-    model: (import.meta.env.VITE_DEEPSEEK_MODEL as string | undefined) ?? DEFAULT_MODEL,
-  }
-}
-
-export async function evaluateWithLlm(
-  config: LlmConfig,
-  transcript: string,
+export async function extractMeetingEvents(
+  segments: TranscriptSegment[],
+  context: string,
   signal?: AbortSignal,
-): Promise<MeetingAgentState> {
-  const baseUrl = config.baseUrl ?? DEFAULT_BASE_URL
-  const model = config.model ?? DEFAULT_MODEL
-
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+): Promise<{ events: MeetingEvent[]; phaseHint?: MeetingPhase }> {
+  const transcript = segments.map((segment, index) => `${index + 1}. ${segment.text}`).join('\n')
+  const response = await fetch('/meeting-agent/llm/extract', {
     method: 'POST',
     signal,
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.3,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: `当前会议转写（按时间顺序）：\n${transcript}` },
-      ],
-    }),
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ context, transcript }),
   })
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => '')
-    throw new Error(`DeepSeek 调用失败 ${response.status}: ${errorText.slice(0, 200)}`)
+    throw new Error(`会议事件抽取失败 ${response.status}: ${errorText.slice(0, 200)}`)
   }
 
-  const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>
+  const parsed = (await response.json()) as ExtractedPayload
+  return {
+    events: normalizeEvents(parsed.events, segments),
+    phaseHint: parsed.phaseHint,
   }
-  const content = payload.choices?.[0]?.message?.content
-  if (!content) throw new Error('DeepSeek 返回为空')
-
-  const parsed = JSON.parse(content) as Partial<MeetingAgentState>
-  return normalizeState(parsed)
 }
 
-function normalizeState(raw: Partial<MeetingAgentState>): MeetingAgentState {
-  const intervention = raw.intervention ?? {
-    shouldIntervene: false,
-    priority: 'low',
-    reason: '',
-    suggestedText: '',
-  }
-  return {
-    phase: raw.phase ?? 'discussion',
-    currentTopic: raw.currentTopic ?? '',
-    summary: raw.summary ?? '',
-    decisions: Array.isArray(raw.decisions) ? raw.decisions : [],
-    actionItems: Array.isArray(raw.actionItems) ? raw.actionItems : [],
-    openLoops: Array.isArray(raw.openLoops) ? raw.openLoops : [],
-    risks: Array.isArray(raw.risks) ? raw.risks : [],
-    intervention: {
-      shouldIntervene: Boolean(intervention.shouldIntervene),
-      priority: intervention.priority ?? 'low',
-      reason: intervention.reason ?? '',
-      suggestedText: intervention.suggestedText ?? '',
-    },
-    evaluatedAt: new Date().toISOString(),
-  }
+function normalizeEvents(rawEvents: ExtractedPayload['events'], segments: TranscriptSegment[]): MeetingEvent[] {
+  if (!Array.isArray(rawEvents)) return []
+  const now = Date.now()
+  return rawEvents
+    .map((raw, index): MeetingEvent | null => {
+      if (!raw.type || !isEventType(raw.type)) return null
+      const text = typeof raw.text === 'string' ? raw.text.trim() : ''
+      const confidence = clampConfidence(raw.confidence)
+      if (!text || confidence < 0.55) return null
+      return {
+        id: `event-${now}-${index}-${Math.random().toString(36).slice(2, 6)}`,
+        type: raw.type,
+        text,
+        topicTitle: cleanOptional(raw.topicTitle),
+        owner: cleanOptional(raw.owner),
+        deadline: cleanOptional(raw.deadline),
+        severity: normalizePriority(raw.severity),
+        confidence,
+        createdAt: now,
+        segmentIds: segments.map((segment) => segment.id),
+      }
+    })
+    .filter((event): event is MeetingEvent => event !== null)
+}
+
+function isEventType(value: string): value is MeetingEventType {
+  return [
+    'topic_started',
+    'topic_shifted',
+    'decision_proposed',
+    'decision_confirmed',
+    'decision_reversed',
+    'action_created',
+    'action_completed',
+    'open_loop_created',
+    'open_loop_resolved',
+    'risk_detected',
+    'risk_resolved',
+    'conflict_detected',
+    'speaker_signal',
+    'wrap_up_signal',
+  ].includes(value)
+}
+
+function normalizePriority(value: unknown): MeetingAgentPriority | undefined {
+  return value === 'low' || value === 'medium' || value === 'high' ? value : undefined
+}
+
+function clampConfidence(value: unknown): number {
+  if (typeof value !== 'number' || Number.isNaN(value)) return 0.7
+  return Math.max(0, Math.min(1, value))
+}
+
+function cleanOptional(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
